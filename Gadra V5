@@ -1,0 +1,107 @@
+import time
+import deriv_api
+from decimal import Decimal
+
+class DerivTradingBot:
+    def __init__(self):
+        self.api = deriv_api.DerivAPI()
+        self.config = {
+            'stake': Decimal('10'),
+            'win_stake': Decimal('10'),
+            'take_profit': Decimal('15'),
+            'stop_loss': Decimal('5000'),
+            'martingale_split': Decimal('2.55'),
+            'prediction_over': 0,
+            'prediction_under': 9,
+            'recovery_over': 2,
+            'recovery_under': 7,
+            'total_loss': Decimal('0'),
+            'loss_count': 0,
+            'next_trade_condition': 'Even',
+            'current_prediction': None
+        }
+
+    def get_ticks(self):
+        """Fetch last 3 ticks from Deriv API"""
+        return self.api.get_ticks(count=3)
+
+    def analyze_digits(self, tick):
+        """Analyze last digit of tick price"""
+        return int(str(tick)[-1])
+
+    def place_trade(self, prediction):
+        """Place trade with current prediction"""
+        return self.api.buy(
+            contract_type=prediction,
+            amount=float(self.config['stake']),
+            duration=5  # Adjust based on your strategy
+        )
+
+    def manage_martingale(self):
+        """Adjust stake after loss"""
+        self.config['stake'] *= self.config['martingale_split']
+        self.config['total_loss'] += self.config['stake']
+
+    def check_stop_conditions(self):
+        """Check take profit/stop loss conditions"""
+        if self.config['total_loss'] >= self.config['stop_loss']:
+            return 'stop_loss'
+        if self.config['win_stake'] >= self.config['take_profit']:
+            return 'take_profit'
+        return None
+
+    def run_strategy(self):
+        while True:
+            try:
+                # Get market data
+                ticks = self.get_ticks()
+                last_digit = self.analyze_digits(ticks[-1])
+
+                # Determine prediction
+                if self.config['loss_count'] > 0:
+                    # Recovery mode
+                    over_threshold = self.config['recovery_over']
+                    under_threshold = self.config['recovery_under']
+                else:
+                    # Normal mode
+                    over_threshold = self.config['prediction_over']
+                    under_threshold = self.config['prediction_under']
+
+                # Determine trade condition
+                if self.config['next_trade_condition'] == 'Even':
+                    prediction = 'DIGITOVER' if last_digit >= over_threshold else 'DIGITUNDER'
+                else:
+                    prediction = 'DIGITUNDER' if last_digit <= under_threshold else 'DIGITOVER'
+
+                # Place trade
+                result = self.place_trade(prediction)
+
+                # Process result
+                if result['success']:
+                    self.config['win_stake'] += self.config['stake']
+                    self.config['loss_count'] = 0
+                    self.config['stake'] = Decimal('10')  # Reset stake
+                else:
+                    self.manage_martingale()
+                    self.config['loss_count'] += 1
+                    self.config['total_loss'] += self.config['stake']
+
+                # Check stop conditions
+                stop_reason = self.check_stop_conditions()
+                if stop_reason:
+                    print(f"Stopping bot due to {stop_reason}")
+                    break
+
+                # Update trade condition
+                self.config['next_trade_condition'] = 'Even' if self.config['loss_count'] % 2 == 0 else 'Odd'
+
+                time.sleep(60)  # Adjust based on your timeframe
+
+            except Exception as e:
+                print(f"Error: {e}")
+                time.sleep(60)
+
+# Initialize and run bot
+if __name__ == "__main__":
+    bot = DerivTradingBot()
+    bot.run_strategy()
